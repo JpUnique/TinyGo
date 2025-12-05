@@ -1,0 +1,106 @@
+name: Go Backend CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+permissions:
+  contents: read
+
+jobs:
+
+  lint-test-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+      - name: Run Linter
+        run: golangci-lint run ./...
+
+      - name: Run Tests
+        run: go test ./... -v -coverprofile=coverage.out
+
+      - name: Build Application
+        run: go build -v ./cmd/api
+
+      - name: Upload Test Coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-coverage
+          path: coverage.out
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [lint-test-build]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: backend:ci-test
+
+  migrations-check:
+    name: Validate DB Migrations
+    runs-on: ubuntu-latest
+    needs: [lint-test-build]
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_USER: user
+          POSTGRES_DB: service_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U user"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install migrate CLI
+        run: |
+          curl -L https://github.com/golang-migrate/migrate/releases/download/v4.16.2/migrate.linux-amd64.tar.gz -o migrate.tar.gz
+          tar -xzf migrate.tar.gz
+          sudo mv migrate /usr/local/bin/
+
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -U user; do
+            echo "Waiting for DB..."
+            sleep 2
+          done
+
+      - name: Run DB Migrations
+        run: |
+          migrate -path ./migrations -database "postgres://user:password@localhost:5432/service_db?sslmode=disable" up
