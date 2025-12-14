@@ -10,10 +10,10 @@ RUN go build -o tinygo-api .
 
 # Runtime stage
 FROM gcr.io/distroless/base-debian12:nonroot
-WORKDIR /root/
+WORKDIR /app
 
 COPY --from=builder --chown=nonroot:nonroot /app/tinygo-api /app/
 EXPOSE 8080
 
 ENV PORT=8080
-CMD ["app/tinygo-api"]
+CMD ["./tinygo-api"]

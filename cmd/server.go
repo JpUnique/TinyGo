@@ -30,8 +30,10 @@ func New() (*Server, error) {
 		port = "8080"
 	}
 
+	ctx := context.Background()
+
 	// Init Postgres
-	pg, err := store.NewPostgres(pgURL)
+	pg, err := store.NewPostgres(ctx, pgURL)
 	if err != nil {
 		return nil, err
 	}
@@ -41,9 +43,14 @@ func New() (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Init Base URL
+	baseURL := os.Getenv("BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:" + port
+	}
 
 	// Init service
-	shortenerSvc := service.NewShortener(pg, rd)
+	shortenerSvc := service.NewShortener(pg, rd, baseURL)
 
 	// Router
 	r := chi.NewRouter()
@@ -54,7 +61,7 @@ func New() (*Server, error) {
 	r.Use(middleware.Recoverer)
 
 	// API Handlers
-	urlHandler := api.NewURLHandler(shortenerSvc)
+	urlHandler := api.NewShortenHandler(shortenerSvc)
 	urlHandler.RegisterRoutes(r)
 
 	// HTTP Server

@@ -1,55 +1,71 @@
-version: "3.8"
+version: "3.9"
 
 services:
-  api:
-    build: .
-    container_name: tinygo-api
-    ports:
-      - "8080:8080"
+  postgres:
+    image: postgres:16-alpine
+    container_name: tinygo-postgres
     environment:
-      - PORT=8080
-      - DATABASE_URL=postgres://user:password@db:5432/tinygo?sslmode=disable
-      - REDIS_ADDR=redis:6379
-    depends_on:
-      - db
-      - redis
-    restart: unless-stopped
-
-  db:
-    image: postgres:15-alpine
-    container_name: tinygo-db
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       POSTGRES_DB: tinygo
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
     container_name: tinygo-redis
     ports:
       - "6379:6379"
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   migrate:
-    image: migrate/migrate
+    image: migrate/migrate:4
     container_name: tinygo-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
     command:
       [
         "-path",
         "/migrations",
         "-database",
-        "postgres://user:password@db:5432/tinygo?sslmode=disable",
+        "postgres://postgres:postgres@postgres:5432/tinygo?sslmode=disable",
         "up",
       ]
-    volumes:
-      - ./migrations:/migrations
+    restart: on-failure
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tinygo-api
     depends_on:
-      - db
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: 8080
+      BASE_URL: http://localhost:8080
+      POSTGRES_URL: postgres://postgres:postgres@postgres:5432/tinygo?sslmode=disable
+      REDIS_ADDR: redis:6379
+    ports:
+      - "8080:8080"
 
 volumes:
-  postgres_data:
+  pgdata:
